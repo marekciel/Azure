@@ -202,7 +202,7 @@ function Get-Menu {
         $resourcegroup_list,
         $resource_list
     )
-
+    $Type = $false
     $i = 0
     #Create the list for Subscription
     if($subscription_list){
@@ -223,15 +223,24 @@ function Get-Menu {
         $resource = $resource_list
         $name = 'ResourceName'
         $ID = 'ResourceId'
+        $Type = $true
         }
     
     #Create the Menu    
     $resource | ForEach-Object{
         $i++
-        [PSCustomObject]@{Option = $i
-                          $name = $_.$name
-                          $ID = $_.$ID
-                          }        
+        if(!$Type){
+            [PSCustomObject]@{Option = $i
+                              $name = $_.$name
+                              $ID = $_.$ID
+                              } 
+        }else{
+                      [PSCustomObject]@{Option = $i
+                              $name = $_.$name
+                              $ID = $_.$ID
+                              Type = ($($_.ResourceType).split('.'))[1]
+                              }   
+        }       
     }
     [PSCustomObject]@{Option = "R"
                       $name = "Return to Menu"
@@ -314,7 +323,7 @@ function Warning-Message {
 
 } #End Warning-Message
 
-function Option-One {
+function Option-One { #"1. All the subscriptions in ARM platform"
     param( $Sub_list )
 
     #Get the access list for all the subscriptions
@@ -324,7 +333,7 @@ function Option-One {
 
 } #End Option-One 
 
-function Option-Two {
+function Option-Two { # "2. Individual subscription"
     param(
        $Sub_list
     )
@@ -354,7 +363,7 @@ function Option-Two {
     }
 } #End Option-Two
 
-function Option-Three{
+function Option-Three{ #"3. Individual resource group"
     param( $Sub_list )
     
     #Create the menu for all the subscriptions
@@ -426,7 +435,7 @@ function Option-Three{
 
 } #End Option-Three
 
-function Option-Four{
+function Option-Four{ # "4. Individual resource"
     param( $Sub_list )
 
     #Create the menu for all the subscriptions
@@ -479,7 +488,7 @@ function Option-Four{
                 do{ 
                     Clear-Host
                     $get_back = $false
-                    $res_menu | Select-Object option,ResourceName | Format-Table
+                    $res_menu | Select-Object option,ResourceName,type | Format-Table
                     
                     #Get resource option
                     $option = Read-Host "Choose an option"
@@ -522,7 +531,7 @@ function Option-Four{
 
 } #End Option-Four
 
-function Option-Five {
+function Option-Five { #"5. Search for user access permision across all subscriptions"
     param(
        $sub_list
     )
