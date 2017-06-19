@@ -630,9 +630,12 @@ do{
                          "3. Individual resource group";
                          "4. Individual resource";
                          "5. Search for user access permision across all subscriptions";
-                         #"6. Get changes to access permisions in specific date range"
+                         #"6. Get changes to access permisions in specific date range";
+                         #"7. All resource groups in subscription";
+                         #"8. All resources in subscription";
                          "X. Exit";
                          ""
+
         
             $option = Read-Host "Select option number"
             Clear-Host
