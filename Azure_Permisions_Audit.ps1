@@ -14,6 +14,7 @@
 # 0.2 2017.05.28 Upgrade with option 3
 # 0.3 2017.06.01 Added option 4,5
 # 0.4 2017.06.16 Fix bugs and added CSV exports
+# 0.5 2017.06.19 Added type on the resourse menu  
 #
 # #############################################################################
 
@@ -53,7 +54,7 @@ The reason for the local admin check is to indetify if the Set-ExecutionPolicy c
 
 #>
 
-#version 0.4
+#version 0.5
 #requires -module azurerm
 #requires -runasadministrator
 
