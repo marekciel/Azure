@@ -14,7 +14,8 @@
 # 0.2 2017.05.28 Upgrade with option 3
 # 0.3 2017.06.01 Added option 4,5
 # 0.4 2017.06.16 Fix bugs and added CSV exports
-# 0.5 2017.06.19 Added type on the resourse menu  
+# 0.5 2017.06.19 Added type on the resourse menu
+# 0.6 2017.06.20 Replaced module azurerm with azurerm.profile and azurerm.resources to speed up loading time
 #
 # #############################################################################
 
@@ -45,7 +46,7 @@ There is also an option to export permisions to CSV file after each permission o
 .\Azure_Permisions_audit.ps1 
 
 .NOTES
-Script will start slow as it loads azurerm module
+Script will start slow as it loads modules
 It has been tested on the module azurerm -version 4.0.2
 The Script need to be executed as a local administrator but this functionality can be removed if needed for the service desk.
 Just remove #require -runasadministrator
@@ -54,13 +55,15 @@ The reason for the local admin check is to indetify if the Set-ExecutionPolicy c
 
 #>
 
-#version 0.5
-#requires -module azurerm
+#version 0.6
 #requires -runasadministrator
+#requires -module AzureRM.Profile,AzureRM.Resources
 
 #Importing module for the script to work
-Import-Module azurerm
-Write-output "Imported AzureRM module..."
+Import-Module AzureRM.Profile
+Write-output "Imported AzureRM.Profile module..."
+Import-Module AzureRM.Resources
+Write-output "Imported AzureRM.Resources module..."
 
 Function Get-ArmSubscription_Access {
     param(
