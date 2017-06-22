@@ -16,6 +16,7 @@
 # 0.4 2017.06.16 Fix bugs and added CSV exports
 # 0.5 2017.06.19 Added type on the resourse menu
 # 0.6 2017.06.20 Replaced module azurerm with azurerm.profile and azurerm.resources to speed up loading time
+# 0.7 2017.06.22 Removed Get-Menu functions and replaced it with Out-Gridview input option. Added requirement for powershell version 3.0
 #
 # #############################################################################
 
@@ -46,7 +47,7 @@ There is also an option to export permisions to CSV file after each permission o
 .\Azure_Permisions_audit.ps1 
 
 .NOTES
-Script will start slow as it loads modules
+Script will start slow as it loads azurerm module
 It has been tested on the module azurerm -version 4.0.2
 The Script need to be executed as a local administrator but this functionality can be removed if needed for the service desk.
 Just remove #require -runasadministrator
@@ -55,9 +56,11 @@ The reason for the local admin check is to indetify if the Set-ExecutionPolicy c
 
 #>
 
-#version 0.6
+#version 0.5
+#Requires -Version 3.0
 #requires -runasadministrator
 #requires -module AzureRM.Profile,AzureRM.Resources
+
 
 #Importing module for the script to work
 Import-Module AzureRM.Profile
@@ -200,58 +203,6 @@ function Get-ArmAccessForUser {
 
 } #End Get-ArmAccessForUser 
 
-function Get-Menu {
-    param(
-        $subscription_list,
-        $resourcegroup_list,
-        $resource_list
-    )
-    $Type = $false
-    $i = 0
-    #Create the list for Subscription
-    if($subscription_list){
-        $resource = $subscription_list
-        $name = 'SubscriptionName'
-        $ID = 'SubscriptionID'
-        }
-
-    #Create the list for ResourceGroupName
-    if($resourcegroup_list){
-        $resource = $resourcegroup_list
-        $name = 'ResourceGroupName'
-        $ID = 'ResourceId'
-        }
-
-    #Create the list for resources
-    if($resource_list){
-        $resource = $resource_list
-        $name = 'ResourceName'
-        $ID = 'ResourceId'
-        $Type = $true
-        }
-    
-    #Create the Menu    
-    $resource | ForEach-Object{
-        $i++
-        if(!$Type){
-            [PSCustomObject]@{Option = $i
-                              $name = $_.$name
-                              $ID = $_.$ID
-                              } 
-        }else{
-                      [PSCustomObject]@{Option = $i
-                              $name = $_.$name
-                              $ID = $_.$ID
-                              Type = ($($_.ResourceType).split('.'))[1]
-                              }   
-        }       
-    }
-    [PSCustomObject]@{Option = "R"
-                      $name = "Return to Menu"
-                      $ID = ''}        
-
-} #End Get-Menu
-
 function Show-SaveFileDialog{
   param(
     $StartFolder = [Environment]::GetFolderPath('MyDocuments'),
@@ -303,11 +254,12 @@ function Export-output {
 } #End Export-output
 
 function Display-Results{
-    param( $list )
+    param( $list,$TitleBar )
     
     if($list){
-        #$access_list_subs | sort objecttype | ft -AutoSize
-        $list | Out-GridView
+
+        $list | Out-GridView  -Title $($TitleBar+"            Loged in as: "+$user)
+
         #Get the option to export the list to file
         [string]$export_choice = read-host "Do you want to export to CSV? Y/N"
 
@@ -342,198 +294,132 @@ function Option-Two { # "2. Individual subscription"
        $Sub_list
     )
     
-    #Create the menu for all the subscriptions
-    $sub_menu = Get-Menu -subscription_list $Sub_list
-    $sub_menu | select option,Subscriptionname | ft
-
-    #Get subscription option
-    $option = Read-Host "Choose an option"
+    $option = $false
     
-    if($option -eq 'r'){break}
+    #Create the menu for all the subscriptions 
+    $TitleBar = "Connected as: $($user)"   
+    $option = $sub_list | select Subscriptionname,SubscriptionId | sort SubscriptionName | Out-GridView -Title $TitleBar -OutputMode Single
+    
+    if(!$option){break}
 
-    if([int32]$option -le $($sub_menu.count-1)){
-        Clear-Host
-        
-        #Match the option to the subscitpion name to be used in permission function
-        $sub_name = $sub_menu | Where-Object {$_.option -eq $option}
-        
-        Write-Output "Getting access for subscription: $($sub_name.SubscriptionName)   Please wait..."  
-        
-        #Geting the access permisions for subscription
-        $access_list_subs = Get-ArmPermission_Access -Sub_name $sub_name
-        
-        Display-Results -list $access_list_subs
+    Clear-Host    
+    
+    Write-Output "Getting access for subscription: $($option.SubscriptionName)   Please wait..."  
+    
+    #Geting the access permisions for subscription
+    $access_list_subs = Get-ArmPermission_Access -Sub_name $option
+    
+    Display-Results -list $access_list_subs -TitleBar "Access permisions for Subscription: $($option.SubscriptionName)"
 
-    }
+ #   }
 } #End Option-Two
 
 function Option-Three{ #"3. Individual resource group"
     param( $Sub_list )
     
+    $option = $false
+
     #Create the menu for all the subscriptions
-    $sub_menu = Get-Menu -subscription_list $Sub_list
-    $sub_menu | select option,Subscriptionname | ft
+    $TitleBar = "Connected as: $($user)" 
+    $option = $sub_list | select Subscriptionname,SubscriptionId | sort SubscriptionName | Out-GridView -Title $TitleBar -OutputMode Single
     
     #Get subscription option
-    $option = Read-Host "Choose an option"
 
     if($option -eq 'r'){break}
 
-    if([int32]$option -le $($sub_menu.count-1)){
-        Clear-Host
-        
-        #Match the option to the subscitpion name to be used in permission function
-        $sub_name = $sub_menu | Where-Object {$_.option -eq $option}
-        
-        Write-Output "Connecting to subscription: $($sub_name.Subscriptionname)"
-        
-        #Connect to the subscription
-        $tenant = Set-AzureRmContext -SubscriptionId $sub_name.SubscriptionId | Out-Null
-        
-        #Get all the resource groups
-        $ResourceGroups = Get-AzureRmResourceGroup
+    Clear-Host
+    
+    Write-Output "Connecting to subscription: $($option.SubscriptionName)   Please wait..."  
+    
+    #Connect to the subscription
+    $tenant = Set-AzureRmContext -SubscriptionId $option.SubscriptionId | Out-Null
+    
+    #Get all the resource groups for thid subscription
+    $ResourceGroups = Get-AzureRmResourceGroup             
+    
+    While($true){   
+       Clear-Host
+       $option_resgr = $false
 
-        #Create Menu
-        $res_group_menu = Get-Menu -resourcegroup_list $ResourceGroups
-        
-        do{   
-            $get_back = $false
-            Clear-Host
-            Write-Output "Connected to subscription: $($sub_name.Subscriptionname)"  
-            Write-Output "Logged in as: $user"
-            
-            #List rsource groups
-            $res_group_menu | select option,ResourceGroupName | ft
+       Write-Output "Connected to subscription: $($Option.Subscriptionname)"  
+       
+       #Get ResourceGroup option
+       $TitleBar = "Connected as: $($user) / Subscription: $($option.SubscriptionName)"   
+       $option_resgr = $ResourceGroups | select ResourceGroupName,Location,ProvisioningState | sort ResourceGroupName | Out-GridView -Title $TitleBar -OutputMode Single
 
-            #Get ResourceGroup option
-            $option = Read-Host "Choose an option"
-        
-            if($option -eq 'r'){break}
-
-            if([int32]$option -le $($res_group_menu.count-1)){
-                            
-                    Clear-Host
-                    #Match the option to the resouorce group name to be used to retrive permission
-                    $res_group_menu = $res_group_menu | Where-Object {$_.option -eq $option}
-        
-                    Write-Output "Getting access for resource group: $($res_group_menu.ResourceGroupName)   Please wait..."  
-        
-                    #Geting resources for this subscription
-                    $access_list_resgroup = Get-ArmPermission_Access -sub_name $sub_name -resgroup_name $res_group_menu
-        
-                    Display-Results -list $access_list_resgroup
-
-                    $get_back = $true
-            }else{
-
-                Write-Warning 'Inputed number outside the option'
-                $choose = Read-Host 'Do you want to try again: Y/N'
-                
-                if($choose -eq 'Y'){$get_back = $false}else{$get_back = $true}
-            }
-            
-
-        }until($get_back)
-
+       if(!$option_resgr){break}
+                 
+       Clear-Host 
+             
+       Write-Output "Getting access for resource group: $($option_resgr.ResourceGroupName)   Please wait..."  
+    
+       #Geting resources for this subscription
+       $access_list_resgroup = Get-ArmPermission_Access -sub_name $Option -resgroup_name $option_resgr
+    
+       Display-Results -list $access_list_resgroup -TitleBar "Access permisions for Resource Group: $($option_resgr.ResourceGroupName)"
+    
     }
+
 
 } #End Option-Three
 
 function Option-Four{ # "4. Individual resource"
     param( $Sub_list )
+    
+    $option = $false
 
     #Create the menu for all the subscriptions
-    $sub_menu = Get-Menu -subscription_list $Sub_list
-    $sub_menu | Select-Object option,Subscriptionname | Format-Table
-    
-    #Get subscription option
-    $option = Read-Host "Choose an option"
+    $TitleBar = "Connected as: $($user)" 
+    $option = $sub_list | select Subscriptionname,SubscriptionId | sort SubscriptionName | Out-GridView -Title $TitleBar -OutputMode Single 
 
     if($option -eq 'r'){break}
 
-    if([int32]$option -le $($sub_menu.count-1)){
-        Clear-Host
+    Clear-Host
+    
+    Write-Output "Connecting to subscription: $($option.SubscriptionName)   Please wait..."  
+    
+    #Connect to the subscription
+    $tenant = Set-AzureRmContext -SubscriptionId $option.SubscriptionId | Out-Null
         
-        #Match the option to the subscitpion name to be used in permission function
-        $sub_name = $sub_menu | Where-Object {$_.option -eq $option}
-        
-        Write-Output "Connecting to subscription: $($sub_name.Subscriptionname)"
-        #Connect to the subscription
-        Set-AzureRmContext -SubscriptionId $sub_name.SubscriptionId | Out-Null
-        
-        Write-Output "Collecting all the resource groups for $($sub_name.SubscriptionName)"
-        $ResourceGroups = Get-AzureRmResourceGroup
+    While($true){   
+       Clear-Host
+       $option_resgr = $false
+       Write-Output "Collecting Resource Groups for subscription: $($option.SubscriptionName)"
+    
+       #Get all the resource groups for thid subscription
+       $ResourceGroups = Get-AzureRmResourceGroup             
 
-        #Create Menu for resource groups
-        $res_group_menu = Get-Menu -resourcegroup_list $ResourceGroups
-        
-        do{
-            $get_back = $false
-            Clear-host 
-            
-            $res_group_menu | Select-Object option,ResourceGroupName | Format-Table
+       #Get ResourceGroup option
+       $TitleBar = "Connected as: $($user) / Subscription: $($option.SubscriptionName)" 
+       $option_resgr = $ResourceGroups | select ResourceGroupName,Location,ProvisioningState | sort ResourceGroupName | Out-GridView -Title $TitleBar -OutputMode Single
 
-            #Get ResourceGroup option
-            $option = Read-Host "Choose an option"
-            
-            if($option -eq 'r'){break}
+       if(!$option_resgr){break}
+       
+       while($true){
+           
+           $option_reslist = $false
 
-            if([int32]$option -le $($res_group_menu.count-1)){
-                Clear-Host
-            
-                #Match the option to the resouorce group name to be used to retrive permission
-                $res_group_menu = $res_group_menu | Where-Object {$_.option -eq $option}
-                
-                Write-Output "Getting resources for resource group : $($res_group_menu.ResourceGroupName)   Please wait..."  
-                
-                $resource_list = Find-AzureRmResource -ResourceGroupNameEquals $res_group_menu.ResourceGroupName
+           Write-Output "Collecting Resources for Resource Group $($option_resgr.ResourceGroupName)"
+           $resource_list = Find-AzureRmResource -ResourceGroupNameEquals $option_resgr.ResourceGroupName
 
-                $res_menu = Get-Menu -resource_list $resource_list
-                do{ 
-                    Clear-Host
-                    $get_back = $false
-                    $res_menu | Select-Object option,ResourceName,type | Format-Table
-                    
-                    #Get resource option
-                    $option = Read-Host "Choose an option"
 
-                    if($option -eq 'r'){break}
+           ##Get Resources option
+           $TitleBar = "Connected as: $($user) / Subscription: $($option.SubscriptionName) / Resource Group: $($option_resgr.ResourceGroupName)"   
+           $option_reslist = $resource_list | select ResourceName,ResourceType,location,ResourceGroupName,ResourceID | sort ResourceName | Out-GridView -Title $TitleBar -OutputMode Single
+           
+           if(!$option_reslist){break}
+           
+           Write-Output "Getting access permissions for resource : $($option_reslist.ResourceName)   Please wait..." 
+           
+           #Geting resources for this subscription
+           $access_list_res = Get-ArmPermission_Access -sub_name $option -resgroup_name $option_resgr -resource $option_reslist
+    
+           Display-Results -list $access_list_res -TitleBar "Access permisions for Resource: $($option_reslist.ResourceName)"
 
-                    if([int32]$option -le $($res_menu.count-1)){
-                        Clear-Host
-                
-                        #Match the option to the resouorce group name to be used to retrive permission
-                        $res_name = $res_menu | Where-Object {$_.option -eq $option}
-                    
-                        Write-Output "Getting access permissions for resource : $($res_name.ResourceName)   Please wait..." 
-                        
-                        #Geting resources for this subscription
-                        $access_list_res = Get-ArmPermission_Access -sub_name $sub_name -resgroup_name $res_group_name -resource $res_name
-                    
-                        Display-Results -list $access_list_res
-                        
-                        $get_back = $true
-                    }else{
-                        Write-Warning 'Inputed number outside the option'
-                        $choose = Read-Host 'Do you want to try again: Y/N'
-                        
-                        if($choose -eq 'Y'){$get_back = $false}else{$get_back = $true}
-                    }
-                }until($get_back)
-
-                $get_back = $true
-
-            }else{
-                Write-Warning 'Inputed number outside the option'
-                $choose = Read-Host 'Do you want to try again: Y/N'
-
-                if($choose -eq 'Y'){$get_back = $false}else{$get_back = $true}
-            }
-
-        }until($get_back)
+           Clear-Host
+       }
     }
-
-} #End Option-Four
+}
 
 function Option-Five { #"5. Search for user access permision across all subscriptions"
     param(
@@ -588,16 +474,18 @@ function Option-Five { #"5. Search for user access permision across all subscrip
 #Main Code
 do{
     try{
-    
+        
         try{
         Write-output "Checking Azure connection..."
         
         #Check if the connection to the Azure is established
         $user = (Get-AzureRmContext).Account.id
-        if (!$user){throw}   
+        if (!$user){
+                throw
+            }else{   
         
-        Write-output "Connection to Azure tenant has been established"
-
+            Write-output "Connection to Azure tenant has been established"
+            }
         }
         catch{
             Write-Output "Not connected to Azure"
@@ -655,7 +543,7 @@ do{
 
     }
     catch{
-        Write-Output "Could not get any subscriptions. "
+        Write-Output "Could not get any subscriptions or connection to Azure has failed."
         $exit = Read-Host "Do you want to try again? Y/N"
         if($exit -eq "N"){
             $option = "x"
