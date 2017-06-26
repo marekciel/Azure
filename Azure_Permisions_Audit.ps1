@@ -17,6 +17,7 @@
 # 0.5 2017.06.19 Added type on the resourse menu
 # 0.6 2017.06.20 Replaced module azurerm with azurerm.profile and azurerm.resources to speed up loading time
 # 0.7 2017.06.22 Removed Get-Menu functions and replaced it with Out-Gridview input option. Added requirement for powershell version 3.0
+# 0.8 2017.06.26 Added mutiple group members retrival to one out-gridview
 #
 # #############################################################################
 
@@ -56,7 +57,7 @@ The reason for the local admin check is to indetify if the Set-ExecutionPolicy c
 
 #>
 
-#version 0.5
+#version 0.8
 #Requires -Version 3.0
 #requires -runasadministrator
 #requires -module AzureRM.Profile,AzureRM.Resources
@@ -257,11 +258,43 @@ function Display-Results{
     param( $list,$TitleBar )
     
     if($list){
+        
+        while($true){
+            
+            #Display menu
+            $option_group = $list | Out-GridView -Title $($TitleBar+"            Loged in as: "+$user) -OutputMode Multiple
+            
+            if(!$Option_group){break}
 
-        $list | Out-GridView  -Title $($TitleBar+"            Loged in as: "+$user)
 
+            $user_list = $option_group | ForEach-Object {
+                
+                $group_name = $_.Displayname 
+
+                if( $_.ObjectType -eq 'Group'){
+                    #Retreving all users from the group
+                    Get-AzureRmADGroupMember -GroupObjectId $((Get-AzureRmADGroup -SearchString $_.Displayname).id.guid) | select * | foreach {
+                            [PSCustomObject]@{DisplayName = $_.DisplayName
+                                              LoginName = $_.userprincipalname
+                                              Type = $_.type
+                                              MemberOf = $group_name}
+                        }
+                
+            
+                }else{ Write-Warning "'$($_.Displayname)' is not a group therefore can not retrive members" }
+
+            }
+
+            if($User_list){
+                
+                #Display all the members for all the groups selected
+                $User_list | Out-GridView -Title $("Group members            Loged in as: "+$user)
+
+            }else{ Write-Warning "No users in group $($group_name)" }
+                            
+        }
         #Get the option to export the list to file
-        [string]$export_choice = read-host "Do you want to export to CSV? Y/N"
+        [string]$export_choice = read-host "Do you want to export permissions to CSV? Y/N"
 
         #If option yes then export to file using Export-Output function
         if($export_choice -eq "y"){Export-output -csv $list}
