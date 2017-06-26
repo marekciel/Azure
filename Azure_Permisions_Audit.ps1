@@ -18,6 +18,7 @@
 # 0.6 2017.06.20 Replaced module azurerm with azurerm.profile and azurerm.resources to speed up loading time
 # 0.7 2017.06.22 Removed Get-Menu functions and replaced it with Out-Gridview input option. Added requirement for powershell version 3.0
 # 0.8 2017.06.26 Added mutiple group members retrival to one out-gridview
+# 0.9 2017.06.26 Added Option 6 to display Azure RBAC role definitions
 #
 # #############################################################################
 
@@ -57,7 +58,7 @@ The reason for the local admin check is to indetify if the Set-ExecutionPolicy c
 
 #>
 
-#version 0.8
+#version 0.9
 #Requires -Version 3.0
 #requires -runasadministrator
 #requires -module AzureRM.Profile,AzureRM.Resources
@@ -503,6 +504,34 @@ function Option-Five { #"5. Search for user access permision across all subscrip
 
 } #End Option-Five
 
+function Option-Six {
+    $roles = Get-AzureRmRoleDefinition | select name, Description
+    
+    while($true){
+        $option_roles = $roles | Out-GridView -OutputMode Multiple -Title 'Select the role or roles to display definitions'
+        if(!$option_roles){break}
+
+        $option_roles | ForEach-Object {
+            $role_name = $_.name
+            (Get-AzureRmRoleDefinition $_.name).Actions | ForEach-Object {
+        
+                [Pscustomobject]@{Definition = $_
+                                  RoleName = $role_name
+                                  Type = 'Action'}
+     
+            }
+            (Get-AzureRmRoleDefinition $_.name).NotActions | ForEach-Object {
+        
+                [Pscustomobject]@{Definition = $_
+                                  RoleName = $role_name
+                                  Type = 'NotAction'}
+     
+            } 
+       } | Out-GridView -Title 'Role definitions'
+    } 
+
+
+} #End Option-Six
 
 #Main Code
 do{
@@ -554,9 +583,10 @@ do{
                          "3. Individual resource group";
                          "4. Individual resource";
                          "5. Search for user access permision across all subscriptions";
-                         #"6. Get changes to access permisions in specific date range";
-                         #"7. All resource groups in subscription";
-                         #"8. All resources in subscription";
+                         "6. Display all available permision roles"
+                         #"7. Get changes to access permisions in specific date range max 30 days";
+                         #"8. All resource groups in subscription";
+                         #"9. All resources in subscription";
                          "X. Exit";
                          ""
 
@@ -570,6 +600,7 @@ do{
                 3 {Option-Three -Sub_list $subscriptions} 
                 4 {Option-Four -Sub_list $subscriptions}  
                 5 {Option-Five -sub_list $subscriptions}
+                6 {Option-Six}
             }
 
         }until ($option -eq "x")
