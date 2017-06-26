@@ -38,6 +38,7 @@ Choose option to list access permision for:
 3. Individual resource group
 4. Individual resource
 5. Search for user access permision across all subscriptions
+6. Display RBAC permision roles and definitions
 X. Exit
 
 Select option number: 
@@ -583,7 +584,7 @@ do{
                          "3. Individual resource group";
                          "4. Individual resource";
                          "5. Search for user access permision across all subscriptions";
-                         "6. Display all available permision roles"
+                         "6. Display RBAC permision roles and definitions"
                          #"7. Get changes to access permisions in specific date range max 30 days";
                          #"8. All resource groups in subscription";
                          #"9. All resources in subscription";
