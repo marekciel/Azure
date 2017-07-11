@@ -62,7 +62,7 @@ The reason for the local admin check is to indetify if the Set-ExecutionPolicy c
 #version 0.9
 #Requires -Version 3.0
 #requires -runasadministrator
-#requires -module AzureRM.Profile,AzureRM.Resources
+#requires -module AzureRM.Profile,@{ModuleName="AzureRM.Resources";ModuleVersion="4.1.0"}
 
 
 #Importing module for the script to work
