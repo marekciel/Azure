@@ -18,7 +18,9 @@
 # 0.6 2017.06.20 Replaced module azurerm with azurerm.profile and azurerm.resources to speed up loading time
 # 0.7 2017.06.22 Removed Get-Menu functions and replaced it with Out-Gridview input option. Added requirement for powershell version 3.0
 # 0.8 2017.06.26 Added mutiple group members retrival to one out-gridview
-# 0.9 2017.06.26 Added Option 6 to display Azure RBAC role definitions
+# 0.9 Added Option 6 to display Azure RBAC role definitions
+# 1.0 Added Option 7 to display changes to permission in the specific time frame
+# 1.1 Added option to display all RBAC roles for all the subscriptions, also minor bug fixes
 #
 # #############################################################################
 
@@ -38,8 +40,10 @@ Choose option to list access permision for:
 3. Individual resource group
 4. Individual resource
 5. Search for user access permision across all subscriptions
-6. Display RBAC permision roles and definitions
-X. Exit
+6. Display RBAC permision roles and definitions for specific subscription
+7. Display RBAC permision roles and definitions for all subscriptions
+8. Get changes to access permisions between 1 and max 14 days
+X. Exit               
 
 Select option number: 
 
@@ -59,9 +63,9 @@ The reason for the local admin check is to indetify if the Set-ExecutionPolicy c
 
 #>
 
-#version 0.9
+#version 1.0
 #Requires -Version 3.0
-#Requires -runasadministrator
+#equires -runasadministrator
 #Requires -Modules AzureRM.Profile, @{ModuleName="AzureRM.Resources";ModuleVersion="4.1.0"}
 
 
@@ -85,7 +89,7 @@ Function Get-ArmSubscription_Access {
         #Progress bar counter
         $i++
         $subname = $_.SubscriptionName
-
+        
         Write-Progress -Activity "Retreiving Subscription info" -PercentComplete (($i/$Subs.count)*100) -Status "Ramaining $($Subs.count-$($i-1))"
         
         #Get permisions for all subscriptions
@@ -97,6 +101,7 @@ Function Get-ArmSubscription_Access {
                     Displayname = $_.DisplayName
                     Role = $_.RoleDefinitionName
                     ObjectType = $_.ObjectType
+                    Scope = $_.scope
                 }
             }
     
@@ -314,6 +319,265 @@ function Warning-Message {
 
 } #End Warning-Message
 
+function Get-AzureRmAuthorizationChangeLog { 
+<#
+
+.SYNOPSIS
+
+Gets access change history for the selected subscription for the specified time range i.e. role assignments that were added or removed, including classic administrators (co-administrators and service administrators).
+Maximum duration that can be queried is 15 days (going back up to past 90 days).
+
+
+.DESCRIPTION
+
+The Get-AzureRmAuthorizationChangeLog produces a report of who granted (or revoked) what role to whom at what scope within the subscription for the specified time range. 
+
+The command queries all role assignment events from the Insights resource provider of Azure Resource Manager. Specifying the time range is optional. If both StartTime and EndTime parameters are not specified, the default query interval is the past 1 hour. Maximum duration that can be queried is 15 days (going back up to past 90 days).
+
+
+.PARAMETER StartTime 
+
+Start time of the query. Optional.
+
+
+.PARAMETER EndTime 
+
+End time of the query. Optional
+
+
+.EXAMPLE 
+
+Get-AzureRmAuthorizationChangeLog
+
+Gets the access change logs for the past hour.
+
+
+.EXAMPLE   
+
+Get-AzureRmAuthorizationChangeLog -StartTime "09/20/2015 15:00" -EndTime "09/24/2015 15:00"
+
+Gets all access change logs between the specified dates
+
+Timestamp        : 2015-09-23 21:52:41Z
+Caller           : admin@rbacCliTest.onmicrosoft.com
+Action           : Revoked
+PrincipalId      : 54401967-8c4e-474a-9fbb-a42073f1783c
+PrincipalName    : testUser
+PrincipalType    : User
+Scope            : /subscriptions/9004a9fd-d58e-48dc-aeb2-4a4aec58606f/resourceGroups/TestRG/providers/Microsoft.Network/virtualNetworks/testresource
+ScopeName        : testresource
+ScopeType        : Resource
+RoleDefinitionId : /subscriptions/9004a9fd-d58e-48dc-aeb2-4a4aec58606f/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c
+RoleName         : Contributor
+
+
+.EXAMPLE 
+
+Get-AzureRmAuthorizationChangeLog  -StartTime ([DateTime]::Now - [TimeSpan]::FromDays(5)) -EndTime ([DateTime]::Now) | FT Caller, Action, RoleName, PrincipalName, ScopeType
+
+Gets access change logs for the past 5 days and format the output
+
+Caller                  Action                  RoleName                PrincipalName           ScopeType
+------                  ------                  --------                -------------           ---------
+admin@contoso.com       Revoked                 Contributor             User1                   Subscription
+admin@contoso.com       Granted                 Reader                  User1                   Resource Group
+admin@contoso.com       Revoked                 Contributor             Group1                  Resource
+
+.LINK
+
+New-AzureRmRoleAssignment
+
+.LINK
+
+Get-AzureRmRoleAssignment
+
+.LINK
+
+Remove-AzureRmRoleAssignment
+
+#>
+
+    [CmdletBinding()] 
+    param(  
+        [parameter(Mandatory=$false, ValueFromPipelineByPropertyName=$true, HelpMessage = "The start time. Optional
+             If both StartTime and EndTime are not provided, defaults to querying for the past 1 hour. Maximum allowed difference in StartTime and EndTime is 15 days")] 
+        [DateTime] $StartTime,
+
+        [parameter(Mandatory=$false, ValueFromPipelineByPropertyName=$true, HelpMessage = "The end time. Optional. 
+            If both StartTime and EndTime are not provided, defaults to querying for the past 1 hour. Maximum allowed difference in StartTime and EndTime is 15 days")] 
+        [DateTime] $EndTime
+    ) 
+    PROCESS { 
+         # Get all events for the "Microsoft.Authorization" provider by calling the Insights commandlet
+         $events = Get-AzureRmLog -ResourceProvider "Microsoft.Authorization" -DetailedOutput -StartTime $StartTime -EndTime $EndTime
+             
+         $startEvents = @{}
+         $endEvents = @{}
+         $offlineEvents = @()
+
+         # StartEvents and EndEvents will contain matching pairs of logs for when role assignments (and definitions) were created or deleted. 
+         # i.e. A PUT on roleassignments will have a Start-End event combination and a DELETE on roleassignments will have another Start-End event combination
+         $startEvents = $events | ? { $_.httpRequest -and $_.Status -ieq "Started" }
+         $events | ? { $_.httpRequest -and $_.Status -ne "Started" } | % { $endEvents[$_.OperationId] = $_ }
+         # This filters non-RBAC events like classic administrator write or delete
+         $events | ? { $_.httpRequest -eq $null } | % { $offlineEvents += $_ } 
+
+         $output = @()
+
+         # Get all role definitions once from the service and cache to use for all 'startevents'
+         $azureRoleDefinitionCache = @{}
+         Get-AzureRmRoleDefinition | % { $azureRoleDefinitionCache[$_.Id] = $_ }
+
+         $principalDetailsCache = @{}
+
+         # Process StartEvents
+         # Find matching EndEvents that succeeded and relating to role assignments only
+         $startEvents | ? { $endEvents.ContainsKey($_.OperationId) `
+             -and $endEvents[$_.OperationId] -ne $null `
+             -and $endevents[$_.OperationId].OperationName.StartsWith("Microsoft.Authorization/roleAssignments", [System.StringComparison]::OrdinalIgnoreCase)  `
+             -and $endEvents[$_.OperationId].Status -ieq "Succeeded"} |  % {
+       
+         $endEvent = $endEvents[$_.OperationId];
+        
+         # Create the output structure
+         $out = "" | select Timestamp, Caller, Action, PrincipalId, PrincipalName, PrincipalType, Scope, ScopeName, ScopeType, RoleDefinitionId, RoleName
+
+         $out.Timestamp = Get-Date -Date $endEvent.EventTimestamp -Format u
+         $out.Caller = $_.Caller
+         if ($_.HttpRequest.Method -ieq "PUT") {
+            $out.Action = "Granted"
+            if ($_.Properties.Content.ContainsKey("requestbody")) {
+                $messageBody = ConvertFrom-Json $_.Properties.Content["requestbody"]
+            }
+             
+          $out.Scope =  $_.Authorization.Scope
+        } 
+        elseif ($_.HttpRequest.Method -ieq "DELETE") {
+            $out.Action = "Revoked"
+            if ($endEvent.Properties.Content.ContainsKey("responseBody")) {
+                $messageBody = ConvertFrom-Json $endEvent.Properties.Content["responseBody"]
+            }
+        }
+
+        if ($messageBody) {
+            # Process principal details
+            $out.PrincipalId = $messageBody.properties.principalId
+            if ($out.PrincipalId -ne $null) { 
+				# Get principal details by querying Graph. Cache principal details and read from cache if present
+				$principalId = $out.PrincipalId 
+                
+				if($principalDetailsCache.ContainsKey($principalId)) {
+					# Found in cache
+                    $principalDetails = $principalDetailsCache[$principalId]
+                } else { # not in cache
+		            $principalDetails = "" | select Name, Type
+                    $user = Get-AzureRmADUser -ObjectId $principalId
+                    if ($user) {
+                        $principalDetails.Name = $user.DisplayName
+                        $principalDetails.Type = "User"    
+                    } else {
+                        $group = Get-AzureRmADGroup -ObjectId $principalId
+                        if ($group) {
+                            $principalDetails.Name = $group.DisplayName
+                            $principalDetails.Type = "Group"        
+                        } else {
+                            $servicePrincipal = Get-AzureRmADServicePrincipal -objectId $principalId
+                            if ($servicePrincipal) {
+                                $principalDetails.Name = $servicePrincipal.DisplayName
+                                $principalDetails.Type = "Service Principal"                        
+                            }
+                        }
+                    }              
+					# add principal details to cache
+                    $principalDetailsCache.Add($principalId, $principalDetails);
+	            }
+
+                $out.PrincipalName = $principalDetails.Name
+                $out.PrincipalType = $principalDetails.Type
+            }
+
+			# Process scope details
+            if ([string]::IsNullOrEmpty($out.Scope)) { $out.Scope = $messageBody.properties.Scope }
+            if ($out.Scope -ne $null) {
+				# Remove the authorization provider details from the scope, if present
+			    if ($out.Scope.ToLower().Contains("/providers/microsoft.authorization")) {
+					$index = $out.Scope.ToLower().IndexOf("/providers/microsoft.authorization") 
+					$out.Scope = $out.Scope.Substring(0, $index) 
+				}
+
+              	$scope = $out.Scope 
+				$resourceDetails = "" | select Name, Type
+                $scopeParts = $scope.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries)
+                $len = $scopeParts.Length
+
+                if ($len -gt 0 -and $len -le 2 -and $scope.ToLower().Contains("subscriptions"))	{
+                    $resourceDetails.Type = "Subscription"
+                    $resourceDetails.Name  = $scopeParts[1]
+                } elseif ($len -gt 0 -and $len -le 4 -and $scope.ToLower().Contains("resourcegroups")) {
+                    $resourceDetails.Type = "Resource Group"
+                    $resourceDetails.Name  = $scopeParts[3]
+                    } elseif ($len -ge 6 -and $scope.ToLower().Contains("providers")) {
+                        $resourceDetails.Type = "Resource"
+                        $resourceDetails.Name  = $scopeParts[$len -1]
+                        }
+                
+				$out.ScopeName = $resourceDetails.Name
+                $out.ScopeType = $resourceDetails.Type
+            }
+
+			# Process Role definition details
+            $out.RoleDefinitionId = $messageBody.properties.roleDefinitionId
+			
+            if ($out.RoleDefinitionId -ne $null) {
+								
+				#Extract roleDefinitionId Guid value from the fully qualified id string.
+				$roleDefinitionIdGuid= $out.RoleDefinitionId.Substring($out.RoleDefinitionId.LastIndexOf("/")+1)
+
+                if ($azureRoleDefinitionCache[$roleDefinitionIdGuid]) {
+                    $out.RoleName = $azureRoleDefinitionCache[$roleDefinitionIdGuid].Name
+                } else {
+                    $out.RoleName = ""
+                }
+            }
+        }
+        $output += $out
+    } # start event processing complete
+
+    # Filter classic admins events
+    $offlineEvents | % {
+        if($_.Status -ne $null -and $_.Status -ieq "Succeeded" -and $_.OperationName -ne $null -and $_.operationName.StartsWith("Microsoft.Authorization/ClassicAdministrators", [System.StringComparison]::OrdinalIgnoreCase)) {
+            
+            $out = "" | select Timestamp, Caller, Action, PrincipalId, PrincipalName, PrincipalType, Scope, ScopeName, ScopeType, RoleDefinitionId, RoleName
+            $out.Timestamp = Get-Date -Date $_.EventTimestamp -Format u
+            $out.Caller = "Subscription Admin"
+
+            if($_.operationName -ieq "Microsoft.Authorization/ClassicAdministrators/write"){
+                $out.Action = "Granted"
+            } 
+            elseif($_.operationName -ieq "Microsoft.Authorization/ClassicAdministrators/delete"){
+                $out.Action = "Revoked"
+            }
+
+            $out.RoleDefinitionId = $null
+            $out.PrincipalId = $null
+            $out.PrincipalType = "User"
+            $out.Scope = "/subscriptions/" + $_.SubscriptionId
+            $out.ScopeType = "Subscription"
+            $out.ScopeName = $_.SubscriptionId
+                                
+            if($_.Properties -ne $null){
+                $out.PrincipalName = $_.Properties.Content["adminEmail"]
+                $out.RoleName = "Classic " + $_.Properties.Content["adminType"]
+            }
+                     
+            $output += $out
+        }
+    } # end offline events
+
+    $output | Sort Timestamp
+    } 
+} # End commandlet
+
 function Option-One { #"1. All the subscriptions in ARM platform"
     param( $Sub_list )
 
@@ -469,8 +733,8 @@ function Option-Five { #"5. Search for user access permision across all subscrip
 
         try{
             #Check if the users exist in Azure Ad
-            Get-AzureRmRoleAssignment -SignInName $user -ErrorAction stop | Out-Null
-            
+            if(Get-AzureRmADUser -UserPrincipalName $user | Out-Null){Throw 'No user found'}
+                        
             #Go through the list of subscriptions
             $user_access = $sub_list | ForEach-Object {
                     
@@ -506,33 +770,145 @@ function Option-Five { #"5. Search for user access permision across all subscrip
 } #End Option-Five
 
 function Option-Six {
-    $roles = Get-AzureRmRoleDefinition | select name, Description
-    
-    while($true){
-        $option_roles = $roles | Out-GridView -OutputMode Multiple -Title 'Select the role or roles to display definitions'
-        if(!$option_roles){break}
+    param(
+        $sub_list
+    )
+    $titlebar = "Select Subscription to retrieve Roles"
+    $option = $sub_list | Select-Object subscriptionname,subscriptionId | sort SubscriptionName | Out-GridView -Title $TitleBar -OutputMode Single
+        if(!$option){break}
+    $Title_subname = $null
 
-        $option_roles | ForEach-Object {
-            $role_name = $_.name
-            (Get-AzureRmRoleDefinition $_.name).Actions | ForEach-Object {
+    $option | ForEach-Object {
+        $Title_subname = $_.subscriptionName
+        Set-AzureRmContext -Subscriptionid $_.subscriptionid | Out-Null
+        $roles = Get-AzureRmRoleDefinition | select name, Description, iscustom
         
-                [Pscustomobject]@{Definition = $_
-                                  RoleName = $role_name
-                                  Type = 'Action'}
-     
-            }
-            (Get-AzureRmRoleDefinition $_.name).NotActions | ForEach-Object {
+        while($true){
+            $option_roles = $roles | Out-GridView -OutputMode Multiple -Title "All roles for subscription $($Title_subname)"
+            if(!$option_roles){break}
+
+            $option_roles | ForEach-Object {
+                $role_name = $_.name
+                (Get-AzureRmRoleDefinition $_.name).Actions | ForEach-Object {
+            
+                    [Pscustomobject]@{Definition = $_
+                                    RoleName = $role_name
+                                    Type = 'Action'}
         
-                [Pscustomobject]@{Definition = $_
-                                  RoleName = $role_name
-                                  Type = 'NotAction'}
-     
+                }
+                (Get-AzureRmRoleDefinition $_.name).NotActions | ForEach-Object {
+            
+                    [Pscustomobject]@{Definition = $_
+                                    RoleName = $role_name
+                                    Type = 'NotAction'}
+        
+                } 
             } 
-       } | Out-GridView -Title 'Role definitions'
-    } 
-
+        }  
+    } | Out-GridView -Title 'Role definitions6'
 
 } #End Option-Six
+
+function Option-Seven {
+    param(
+        $sub_list
+    )
+    Write-Output "Collecting all roles from all subscription. Please wait..."
+    $i = 0
+    $roles = $subscriptions | ForEach-Object {
+        $i++
+        $subname = $_.subscriptionname
+        Set-AzureRmContext -Subscriptionid $_.subscriptionid | Out-Null
+        Write-Progress -Activity "Retreiving Subscription info" -PercentComplete (($i/$subscriptions.count)*100) -Status "Ramaining $($subscriptions.count-$($i-1))"
+        
+        Get-AzureRmRoleDefinition | foreach {
+            if($_.IScustom -eq $false){$subname = 'Global Rule'}
+            [PSCustomObject]@{
+                              name = $_.name
+                              Description = $_.Description
+                              IScustom = $_.IScustom
+                              AssignableScopes = $_.AssignableScopes
+                              Subscription = $subname
+                              }  
+        }
+    }
+    #Remove progress bar
+    Write-Progress -Activity "Retreiving Subscription info" -Completed
+        
+    $result = $roles | ?{$_.iscustom -eq $false} | sort name -Unique
+    $result += $roles | ?{$_.iscustom -eq $true}
+    #$result | Out-GridView
+
+    while($true){
+        $option_roles = $result | Out-GridView -OutputMode Multiple -Title "All roles for subscription all subscription"
+        if(!$option_roles){break}
+    
+        $option_roles | ForEach-Object {
+            
+            $role_name = $_.name
+            $scopeid = ($_.AssignableScopes -split '/')[2]
+            $scopepath = '{'+$_.AssignableScopes+'}'
+            try{
+                if($_.IScustom -eq $true){
+                    $connection = Set-azurermcontext -subscriptionid $scopeid -ErrorAction stop 
+                }
+            
+                
+                (Get-AzureRmRoleDefinition $_.name).Actions | ForEach-Object {
+        
+                    [Pscustomobject]@{Definition = $_
+                                    RoleName = $role_name
+                                    Type = 'Action'}
+    
+                }
+                (Get-AzureRmRoleDefinition $_.name).NotActions | ForEach-Object {
+        
+                    [Pscustomobject]@{Definition = $_
+                                    RoleName = $role_name
+                                    Type = 'NotAction'}
+    
+                } 
+            }
+            catch{
+                $scopepth 
+                [Pscustomobject]@{Definition = 'Problem with a subscription scope: '+$scopepath
+                                    RoleName = $role_name
+                                    Type = $null}
+            }
+        } | Out-GridView -Title 'Role definitions'
+} 
+
+
+} #End Option-Seven
+
+
+function Option-Eight {
+    param(
+        $sub_list
+    )
+    $TitleBar = 'Select Subscription'
+    $option = $sub_list | Select-Object subscriptionname,subscriptionId | sort SubscriptionName | Out-GridView -Title $TitleBar -OutputMode Multiple
+        if(!$option){break}
+    #Day range
+    [int32]$days = Read-Host "Choose number of days between 1-14"
+    
+    #Set to current subscription
+    $history = $option | foreach{
+        #Connecting to Subscription
+        Set-AzureRmContext -Subscriptionid $_.subscriptionid | Out-Null
+        
+        #Collect logs
+        Write-host "Collecting Logs from "$_.subscriptionname
+        Get-AzureRmAuthorizationChangeLog -StartTime ([DateTime]::Now - [TimeSpan]::FromDays($days)) -EndTime ([DateTime]::Now) | select Caller, Action, RoleName, PrincipalName, ScopeType, Timestamp, Scopename
+        
+    }
+    if($history){
+        $history | Out-GridView
+    }else{
+        Write-Output "No changes found"
+        Read-Host "Press any key to return to menu"
+    }
+} #End of Option-Eight
 
 #Main Code
 do{
@@ -584,8 +960,9 @@ do{
                          "3. Individual resource group";
                          "4. Individual resource";
                          "5. Search for user access permision across all subscriptions";
-                         "6. Display RBAC permision roles and definitions"
-                         #"7. Get changes to access permisions in specific date range max 30 days";
+                         "6. Display RBAC permision roles and definitions for specific subscription"
+                         "7. Display RBAC permision roles and definitions for all subscriptions"
+                         "8. Get changes to access permisions between 1 and max 14 days";
                          #"8. All resource groups in subscription";
                          #"9. All resources in subscription";
                          "X. Exit";
@@ -601,7 +978,9 @@ do{
                 3 {Option-Three -Sub_list $subscriptions} 
                 4 {Option-Four -Sub_list $subscriptions}  
                 5 {Option-Five -sub_list $subscriptions}
-                6 {Option-Six}
+                6 {Option-Six -sub_list $subscriptions}
+                7 {Option-Seven -sub_list $subscriptions}
+                8 {Option-Eight -sub_list $subscriptions}
             }
 
         }until ($option -eq "x")
